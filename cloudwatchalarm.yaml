@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create CloudWatch Alarm
+Resources:
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricAlarm'
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeTags'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+  CloudWatchFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Description: Create CloudWatch Alarm
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+
+             ec2 = boto3.resource('ec2')
+             cloudwatch = boto3.client('cloudwatch')
+
+             instances=ec2.instances.filter(Filters=[{'Name':'tag:Env','Values': ['Prod']}])
+             threshold=70.0
+             sns_topic='arn:aws:sns:us-east-1:504774420268:medium'
+
+             for instance in instances:
+                for tags in instance.tags:
+                   if tags["Key"] == 'Name':
+                      instance_id=instance.id
+                      instance_name = tags["Value"]
+                   
+                      try:
+                         #Create CloudWatch Alarm for Memroy Utilization
+                         
+                         cloudwatch.put_metric_alarm(AlarmName="%s_%s" % (instance_name, 'MemoryUtilization'),ComparisonOperator='GreaterThanThreshold',EvaluationPeriods=1,MetricName='MemoryUtilization',Namespace='System/Linux',Period=300,Statistic='Average',Threshold=threshold,AlarmDescription="Alarm when %s memory utilization exceeds threshold!" % instance_name,Dimensions=[{'Name': 'InstanceId','Value': instance_id},],Unit='Percent',ActionsEnabled=True,AlarmActions=[sns_topic])
+                         
+                         #Create CloudWatch Alarm for Disk Space Utilization
+                         
+                         cloudwatch.put_metric_alarm(AlarmName="%s_%s" % (instance_name, 'DiskSpaceUtilization'),ComparisonOperator='GreaterThanThreshold',EvaluationPeriods=1,MetricName='DiskSpaceUtilization',Namespace='System/Linux',Period=300,Statistic='Average',Threshold=threshold,AlarmDescription="Alarm when %s disk space utilization exceeds threshold!" % instance_name,Dimensions=[{'Name': 'InstanceId','Value': instance_id},{'Name':'Filesystem','Value':'/dev/xvda1'},{'Name':'MountPath','Value':'/'}],Unit='Percent',ActionsEnabled=True,AlarmActions=[sns_topic])
+                         
+                      
+                      except Exception as e:
+                         print("Error creating alarm %s_%s" % (instance_name, metric_name))
+                         cfnresponse.send(event, context, cfnresponse.FAILED, {})
+             cfnresponse.send(event, context, cfnresponse.SUCCESS, {})  
+      Handler: index.handler
+      Role:
+        'Fn::GetAtt':
+          - LambdaExecutionRole
+          - Arn
+      Runtime: python3.7
+  CreateCloudWatchAlarm:
+    Type: 'AWS::CloudFormation::CustomResource'
+    DependsOn: CloudWatchFunction
+    Version: 1
+    Properties:
+      ServiceToken:
+        'Fn::GetAtt':
+          - CloudWatchFunction
+          - Arn
