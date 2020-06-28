@@ -47,7 +47,7 @@ Resources:
 
              instances=ec2.instances.filter(Filters=[{'Name':'tag:Env','Values': ['Prod']}])
              threshold=70.0
-             sns_topic='arn:aws:sns:us-east-1:504774420268:medium'
+             sns_topic=''
 
              for instance in instances:
                 for tags in instance.tags:
